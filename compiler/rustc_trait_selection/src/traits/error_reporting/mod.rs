@@ -1088,6 +1088,13 @@ trait InferCtxtPrivExt<'tcx> {
         obligation: &PredicateObligation<'tcx>,
     );
 
+    fn maybe_suggest_unsized_generics(
+        &self,
+        err: &mut DiagnosticBuilder<'tcx>,
+        span: Span,
+        node: Node<'hir>,
+    );
+
     fn is_recursive_obligation(
         &self,
         obligated_types: &mut Vec<&ty::TyS<'tcx>>,
@@ -1773,12 +1780,21 @@ impl<'a, 'tcx> InferCtxtPrivExt<'tcx> for InferCtxt<'a, 'tcx> {
             _ => return,
         };
         debug!("suggest_unsized_bound_if_applicable: node={:#?}", node);
+        self.maybe_suggest_unsized_generics(err, span, node);
+    }
+
+    fn maybe_suggest_unsized_generics(
+        &self,
+        err: &mut DiagnosticBuilder<'tcx>,
+        span: Span,
+        node: Node<'hir>,
+    ) {
         let generics = match node.generics() {
             Some(generics) => generics,
             None => return,
         };
-        debug!("suggest_unsized_bound_if_applicable: generics.params={:?}", generics.params);
-        debug!("suggest_unsized_bound_if_applicable: generics.where_clause={:?}", generics.where_clause);
+        debug!("maybe_suggest_unsized_generics: generics.params={:?}", generics.params);
+        debug!("maybe_suggest_unsized_generics: generics.where_clause={:?}", generics.where_clause);
         for param in generics.params {
             if param.span != span
                 || param.bounds.iter().any(|bound| {
@@ -1788,7 +1804,7 @@ impl<'a, 'tcx> InferCtxtPrivExt<'tcx> for InferCtxt<'a, 'tcx> {
             {
                 continue;
             }
-            debug!("suggest_unsized_bound_if_applicable: param={:?}", param);
+            debug!("maybe_suggest_unsized_generics: param={:?}", param);
             match node {
                 hir::Node::Item(
                     item
