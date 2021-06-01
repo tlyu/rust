@@ -1763,7 +1763,8 @@ impl<'a, 'tcx> InferCtxtPrivExt<'tcx> for InferCtxt<'a, 'tcx> {
                 ) => (pred, item_def_id, span),
                 _ => return,
             };
-
+        debug!("suggest_unsized_bound_if_applicable: pred={:?} item_def_id={:?} span={:?}",
+            pred, item_def_id, span);
         let node = match (
             self.tcx.hir().get_if_local(item_def_id),
             Some(pred.def_id()) == self.tcx.lang_items().sized_trait(),
@@ -1771,10 +1772,13 @@ impl<'a, 'tcx> InferCtxtPrivExt<'tcx> for InferCtxt<'a, 'tcx> {
             (Some(node), true) => node,
             _ => return,
         };
+        debug!("suggest_unsized_bound_if_applicable: node={:#?}", node);
         let generics = match node.generics() {
             Some(generics) => generics,
             None => return,
         };
+        debug!("suggest_unsized_bound_if_applicable: generics.params={:?}", generics.params);
+        debug!("suggest_unsized_bound_if_applicable: generics.where_clause={:?}", generics.where_clause);
         for param in generics.params {
             if param.span != span
                 || param.bounds.iter().any(|bound| {
@@ -1784,6 +1788,7 @@ impl<'a, 'tcx> InferCtxtPrivExt<'tcx> for InferCtxt<'a, 'tcx> {
             {
                 continue;
             }
+            debug!("suggest_unsized_bound_if_applicable: param={:?}", param);
             match node {
                 hir::Node::Item(
                     item
@@ -1891,6 +1896,7 @@ impl<'v> Visitor<'v> for FindTypeParam {
                 if path.segments.len() == 1 && path.segments[0].ident.name == self.param =>
             {
                 if !self.nested {
+                    debug!("FindTypeParam::visit_ty: ty={:?}", ty);
                     self.invalid_spans.push(ty.span);
                 }
             }
