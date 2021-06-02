@@ -1802,48 +1802,50 @@ impl<'a, 'tcx> InferCtxtPrivExt<'tcx> for InferCtxt<'a, 'tcx> {
             Some(generics) => generics,
             None => return,
         };
+        let sized_trait = self.tcx.lang_items().sized_trait();
         debug!("maybe_suggest_unsized_generics: generics.params={:?}", generics.params);
         debug!("maybe_suggest_unsized_generics: generics.where_clause={:?}", generics.where_clause);
-        for param in generics.params {
-            if param.span != span
-                || param.bounds.iter().any(|bound| {
-                    bound.trait_ref().and_then(|trait_ref| trait_ref.trait_def_id())
-                        == self.tcx.lang_items().sized_trait()
+        let param = generics.params.iter()
+            .filter(|param| param.span == span)
+            .filter(|param| {
+                param.bounds.iter().all(|bound| {
+                    bound.trait_ref().and_then(|tr| tr.trait_def_id()) != sized_trait
                 })
-            {
-                continue;
-            }
-            debug!("maybe_suggest_unsized_generics: param={:?}", param);
-            match node {
-                hir::Node::Item(
-                    item
-                    @
-                    hir::Item {
-                        kind:
-                            hir::ItemKind::Enum(..)
-                            | hir::ItemKind::Struct(..)
-                            | hir::ItemKind::Union(..),
-                        ..
-                    },
-                ) => {
-                    if self.maybe_indirection_for_unsized(err, item, param) {
-                        return;
-                    }
+            })
+            .next();
+        let param = match param {
+            Some(param) => param,
+            _ => return,
+        };
+        debug!("maybe_suggest_unsized_generics: param={:?}", param);
+        match node {
+            hir::Node::Item(
+                item
+                @
+                hir::Item {
+                    kind:
+                    hir::ItemKind::Enum(..)
+                    | hir::ItemKind::Struct(..)
+                    | hir::ItemKind::Union(..),
+                    ..
+                },
+            ) => {
+                if self.maybe_indirection_for_unsized(err, item, param) {
+                    return;
                 }
-                _ => {}
-            }
-            let (span, separator) = match param.bounds {
-                [] => (span.shrink_to_hi(), ":"),
-                [.., bound] => (bound.span().shrink_to_hi(), " +"),
-            };
-            err.span_suggestion_verbose(
-                span,
-                "consider relaxing the implicit `Sized` restriction",
-                format!("{} ?Sized", separator),
-                Applicability::MachineApplicable,
-            );
-            return;
-        }
+            },
+            _ => {}
+        };
+        let (span, separator) = match param.bounds {
+            [] => (span.shrink_to_hi(), ":"),
+            [.., bound] => (bound.span().shrink_to_hi(), " +"),
+        };
+        err.span_suggestion_verbose(
+            span,
+            "consider relaxing the implicit `Sized` restriction",
+            format!("{} ?Sized", separator),
+            Applicability::MachineApplicable,
+        );
     }
 
     fn maybe_indirection_for_unsized(
@@ -1861,32 +1863,32 @@ impl<'a, 'tcx> InferCtxtPrivExt<'tcx> for InferCtxt<'a, 'tcx> {
             nested: false,
         };
         visitor.visit_item(item);
-        if !visitor.invalid_spans.is_empty() {
-            let mut multispan: MultiSpan = param.span.into();
+        if visitor.invalid_spans.is_empty() {
+            return false;
+        }
+        let mut multispan: MultiSpan = param.span.into();
+        multispan.push_span_label(
+            param.span,
+            format!("this could be changed to `{}: ?Sized`...", param.name.ident()),
+        );
+        for sp in visitor.invalid_spans {
             multispan.push_span_label(
-                param.span,
-                format!("this could be changed to `{}: ?Sized`...", param.name.ident()),
-            );
-            for sp in visitor.invalid_spans {
-                multispan.push_span_label(
-                    sp,
-                    format!(
-                        "...if indirection were used here: `Box<{}>`",
-                        param.name.ident(),
-                    ),
-                );
-            }
-            err.span_help(
-                multispan,
-                &format!(
-                    "you could relax the implicit `Sized` bound on `{T}` if it were \
-                    used through indirection like `&{T}` or `Box<{T}>`",
-                    T = param.name.ident(),
+                sp,
+                format!(
+                    "...if indirection were used here: `Box<{}>`",
+                    param.name.ident(),
                 ),
             );
-            return true;
         }
-        false
+        err.span_help(
+            multispan,
+            &format!(
+                "you could relax the implicit `Sized` bound on `{T}` if it were \
+                used through indirection like `&{T}` or `Box<{T}>`",
+                T = param.name.ident(),
+            ),
+        );
+        true
     }
 
     fn is_recursive_obligation(
