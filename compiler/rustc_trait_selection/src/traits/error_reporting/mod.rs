@@ -1808,6 +1808,8 @@ impl<'a, 'tcx> InferCtxtPrivExt<'tcx> for InferCtxt<'a, 'tcx> {
         let param = generics.params.iter()
             .filter(|param| param.span == span)
             .filter(|param| {
+                // Check that none of the explicit trait bounds is `Sized`. Assume that an explicit
+                // `Sized` bound is there intentionally and we don't need to suggest relaxing it.
                 param.bounds.iter().all(|bound| {
                     bound.trait_ref().and_then(|tr| tr.trait_def_id()) != sized_trait
                 })
@@ -1823,6 +1825,7 @@ impl<'a, 'tcx> InferCtxtPrivExt<'tcx> for InferCtxt<'a, 'tcx> {
                 item
                 @
                 hir::Item {
+                    // Only suggest indirection for uses of type parameters in ADTs.
                     kind:
                     hir::ItemKind::Enum(..)
                     | hir::ItemKind::Struct(..)
@@ -1836,6 +1839,7 @@ impl<'a, 'tcx> InferCtxtPrivExt<'tcx> for InferCtxt<'a, 'tcx> {
             },
             _ => {}
         };
+        // Didn't add an indirection suggestion, so add a general suggestion to relax `Sized`.
         let (span, separator) = match param.bounds {
             [] => (span.shrink_to_hi(), ":"),
             [.., bound] => (bound.span().shrink_to_hi(), " +"),
@@ -1856,7 +1860,7 @@ impl<'a, 'tcx> InferCtxtPrivExt<'tcx> for InferCtxt<'a, 'tcx> {
     ) -> bool {
         // Suggesting `T: ?Sized` is only valid in an ADT if `T` is only used in a
         // borrow. `struct S<'a, T: ?Sized>(&'a T);` is valid, `struct S<T: ?Sized>(T);`
-        // is not.
+        // is not. Look for invalid "bare" parameter uses, and suggest using indirection.
         let mut visitor = FindTypeParam {
             param: param.name.ident().name,
             invalid_spans: vec![],
