@@ -1090,6 +1090,12 @@ trait InferCtxtPrivExt<'tcx> {
         obligation: &PredicateObligation<'tcx>,
     );
 
+    fn maybe_unsized_assoc_type(
+        &self,
+        err: &mut DiagnosticBuilder<'tcx>,
+        node: Node<'hir>,
+    );
+
     fn maybe_suggest_unsized_generics(
         &self,
         err: &mut DiagnosticBuilder<'tcx>,
@@ -1789,7 +1795,50 @@ impl<'a, 'tcx> InferCtxtPrivExt<'tcx> for InferCtxt<'a, 'tcx> {
             _ => return,
         };
         debug!("suggest_unsized_bound_if_applicable: node={:#?}", node);
+        self.maybe_unsized_assoc_type(err, node);
         self.maybe_suggest_unsized_generics(err, span, node);
+    }
+
+    fn maybe_unsized_assoc_type(
+        &self,
+        err: &mut DiagnosticBuilder<'tcx>,
+        node: Node<'hir>,
+    ) {
+        let item = match node {
+            Node::TraitItem(
+                item @ hir::TraitItem {
+                    kind: hir::TraitItemKind::Type(..), ..
+                }, ..
+            ) => item,
+            _ => return,
+        };
+        let bounds = match item {
+            hir::TraitItem {
+                kind: hir::TraitItemKind::Type(bounds, ..), ..
+            } => bounds,
+            _ => return,
+        };
+        debug!("maybe_unsized_assoc_type: item.span={:?} bounds={:?}", item.span, bounds);
+        let sized_trait = self.tcx.lang_items().sized_trait();
+        // Don't suggest `?Sized` if there's an explicit `Sized` bound already.
+        let explicit_sized = bounds.iter().any(|bound| {
+            bound.trait_ref().and_then(|tr| tr.trait_def_id()) == sized_trait
+        });
+        if explicit_sized {
+            return;
+        }
+        let (span, separator) = match bounds {
+            // Can't use original span because it includes the semicolon, making the
+            // substitution incorrect when there are no explicit bounds.
+            [] => (item.ident.span.shrink_to_hi(), ":"),
+            [.., bound] => (bound.span().shrink_to_hi(), " +"),
+        };
+        err.span_suggestion_verbose(
+            span,
+            "consider relaxing the implicit `Sized` restriction",
+            format!("{} ?Sized", separator),
+            Applicability::MachineApplicable,
+        );
     }
 
     fn maybe_suggest_unsized_generics(
